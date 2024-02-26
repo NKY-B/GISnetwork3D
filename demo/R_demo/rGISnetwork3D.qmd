@@ -1,0 +1,949 @@
+---
+title: "Demonstration of GISnetwork3D in R"
+format: html
+editor: visual
+toc: true
+toc-depth: 4
+toc-location: right-body
+---
+
+```{css echo = FALSE}
+.cell-output {
+  background-color: #f9fbff;
+}
+```
+
+# 1. Introduction
+
+The "GISnetwork3D" is an R package supporting 3D spatial network analysis capable of reading, pre-processing, and analyzing 3D spatial data. This user manual provides a step-by-step demonstration of assessing the spatial accessibility to primary school in a small community in Hong Kong, China by using this package.
+
+This demonstration selected a small community in the Eastern District on the Hong Kong Island as a study area and used the "GISnetwork3D" package to model the spatial accessibility to primary school from residential buildings.
+
+We will use 3D building data, a Digital Terrain Model (DTM), the location of the primary school, 3D pedestrian network, and they were preprocessed in advance. Please note that the data is for demonstration only and is not intended for formal investigation!
+
+The demonstration folder ***"GISnetwork3D\>demo\>R_demo"*** contained all of the documents and data needed to reproduce this demonstration. The details of the documents in this folders are listed below.
+
+**R_demo.Rproj:** An R project. Open this R project and insert the R codes demonstrated below to reproduce the results.
+
+**data:** This folder contains all the data for this demonstration
+
+**Export:** This folder is a destination for depositing maps and plots created during the demonstration.
+
+**rGISnetwork3D.qmd:** This is a quarto markdown file embedding the source code of this demonstration.
+
+**rGISnetwork3D.html:** This demonstration in html format.
+
+# 2. Code demonstration
+
+First, we will install the "GISnetwork3D" package from github.
+
+```{r message=FALSE, output=FALSE}
+library(devtools)
+install_github("benjaminngkayiu/GISnetwork3D", auth_token = "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")
+```
+
+Next, we will load several R packages needed for this demonstration.
+
+```{r message=FALSE}
+library(sf)
+library(raster)
+library(GISnetwork3D)
+library(furrr)
+library(purrr)
+library(igraph)
+library(tmap)
+library(scales)
+```
+
+## 2.1 Data import
+
+Objective: Import all necessary data for the analysis.
+
+### 2.1.1 Import boundary of the study area
+
+We have two boundaries. First, the **studyArea** is the boundary of the study area of which the buildings (or the demands) are located.
+
+Second, the **studyAreaBuf** is the boundary of the 2000m buffer of the study area. This buffer area accounts for the cross-boundary movement of the demand near the fringe of the study area.
+
+All data, except for the buildings, were delineated by this boundary. The raw data were retrieved from the District Council Constituency Areas (DCCA) census map, downloaded from an open data portal by the Hong Kong government (<https://www.csdi.gov.hk/>).
+
+```{r output=FALSE}
+studyArea = st_read("data/studyArea.gpkg")
+studyAreaBuf = st_read("data/studyAreaBuf.gpkg")
+```
+
+### 2.1.2 Import building data
+
+We have two building data. First is the **resBuild**. This includes residential buildings. Second, it is **otherBuild**. This includes buildings other than residential buildings, such as podium structures.
+
+The raw data were retrieved from the iB1000 dataset, which was downloaded from an open data portal managed by the Hong Kong government (<https://www.csdi.gov.hk/>). The landuse of buildings is defined by the Land Utilization map 2022, downloaded from the CSDI portal (<https://portal.csdi.gov.hk/geoportal/#metadataInfoPanel>).
+
+The building data are in polygon format. Though this data contains the third dimension (z value), the z value is 0 for all polygons. The true z value is recorded in the attribute table with the field name called "BASELEVEL".
+
+```{r output=FALSE}
+resBuild = st_read("data/resBuild.gpkg")
+otherBuild = st_read("data/otherBuild.gpkg")
+```
+
+### 2.1.3 Import 3D pedestrian network data
+
+This 3D pedestrian data recorded pedestrian paths in the study area in 3D. This dataset does not simply drape the network on the earth's terrain and record its surface height. This dataset records the actual location of each path. Therefore, this dataset also includes underground, footbridge, and paths inside some major shopping malls. The raw data were downloaded from an open data portal managed by the Hong Kong government (<https://www.csdi.gov.hk/>).
+
+```{r output=FALSE}
+ped = st_read("./data/ped.gpkg")
+```
+
+### 2.1.4 Import the location of primary schools
+
+The location of the primary school within the buffer of the study area was retrieved from the iGeoCom dataset from the open data portal managed by the Hong Kong government (<https://www.csdi.gov.hk/>). This data records the 2D coordinates of the points of interest. Therefore, we will need to estimate the z value from the digital terrain model (DTM).
+
+```{r output=FALSE}
+PRiScH = st_read("./data/PRiScH.gpkg")
+```
+
+### 2.1.5 Import digital terrain model (DTM)
+
+This data recorded the terrain of Hong Kong with 5m resolution in raster format. This raw dataset was obtained from the Hong Kong government (<https://www.csdi.gov.hk/>).
+
+```{r output=FALSE}
+DTM = raster("./data/DTM.tif")
+```
+
+### 2.1.6 Plot the geography of the study area
+
+Now, we can save a map (@fig-geog) to better understand the geography of the study area. The created map will be saved in the ***"Export \> map".***
+
+```{r message = FALSE, output=FALSE}
+#| label: fig-geography
+#| fig-cap: "Geography of the study area"
+png("./Export/map/Map01_Geography_of_study_area.png", width = 180, height = 80, units = "mm", res = 600)
+tm_shape(DTM) + tm_raster(title = "DTM(m)") +
+  tm_shape(studyAreaBuf %>% st_cast("MULTILINESTRING")) + tm_lines(col = "studyAreaBuf", lwd = 2, labels = "2,000m buffer of study area", title.col = "") +
+  tm_shape(ped) + tm_lines(col = "ped", title.col = "", labels = "Pedestrian path", palette = "grey", lwd = 0.6 ) +
+  tm_shape(studyArea %>% st_cast("MULTILINESTRING")) + tm_lines(col = "studyArea", lwd = 1.5, labels = "Study area", title.col = "", palette = "grey40", alpha = 0.5) +
+  tm_shape(otherBuild) + tm_fill(col = "otherBuild", labels = "Other buildings", title = "", palette = "grey70") +
+  tm_shape(resBuild) + tm_fill(col = "resBuild", labels = "Residential buildings", title = "", palette = "blue") +
+  tm_shape(PRiScH) + tm_dots(col = "PRiScH", size = 0.1, title = "", labels = "Primary school", palette = "purple", shape = 17) +
+  tm_compass(position = c("RIGHT", "TOP")) + tm_scale_bar() +
+  tm_layout(legend.outside = T, asp = 0)
+```
+
+![Geography of the study area](Export/map/Map01_Geography_of_study_area.png){#fig-geog}
+
+## 2.2 Data preprocessing
+
+Objective: Preprocess data for latter spatial accessibility analysis
+
+### 2.2.1 Convert resBuild to centroid points and define the Z value
+
+In this study, the spatial accessibility measures the access to primary school from resBuild. We will convert the resBuild to centroid point for each polygon and then use this centroid as the origins for the spatial accessibility analysis. We will create a 3D centroid point layer.
+
+```{r output=FALSE}
+# Convert resBuild to point and drop the z value
+resBuildPT = resBuild %>% st_zm() %>% st_centroid()
+
+# Get the coordinate of the resBuildPT and convert it to data frame
+resBuildPT = resBuildPT %>% cbind( st_coordinates(resBuildPT) ) %>% st_drop_geometry()
+
+# Create the 3D centroid point. The BASELEVEL defines the z value.
+resBuildPT$Z = resBuildPT$BASELEVEL
+resBuildPT = resBuildPT %>% st_as_sf(coords = c("X", "Y", "Z"), crs = 2326)
+```
+
+### 2.2.2 Define the z value of primary school
+
+As the primary school data lack the Z value. Therefore, we extracted the Z value from the DTM and converted the PRiScH to 3D point features.
+
+```{r output=FALSE}
+# Extract Z value
+PRiScH$Z = raster::extract(DTM, PRiScH)
+
+# Get the X Y coordinate of PRiScH and drop geometry
+PRiScH = PRiScH %>% cbind( st_coordinates(PRiScH) ) %>% st_drop_geometry()
+
+# Create 3D point layer
+PRiScH = PRiScH %>% st_as_sf(coords = c("X", "Y", "Z"), crs = 2326)
+```
+
+### 2.2.3 Topology correction of the pedestrian network data
+
+This section will show how to use the "GISnetwork3D" to correct some geometry errors of the input 3D line layer. First, we will demonstrate the component identification. Second, we will demonstrate how to connect the disconnected network nodes.
+
+#### 2.2.3.1 Component identification
+
+In a network, each component represents a group of connected network nodes. Each component is isolated, meaning components A and B are not connected.
+
+We will use the "Identify_components" function from the "GISnetwork3D" package to identify components for the ped layer. The input is the 3D line feature and the output is the input plus an additional field of "component". The component is a numeric vector. Each unique value represents the identifier of each isolated group of line segments.
+
+```{r message=FALSE, warning=FALSE, output=FALSE}
+ped = ped %>% Identify_components()
+```
+
+Here, we used table function to count the frequency of each component and the total number of component
+
+```{r}
+# frequency of each component
+table(ped$component) 
+```
+
+We can see that there are 47 components in the pedestrian path.
+
+```{r}
+# total number of component.
+table(ped$component) %>% length() 
+```
+
+We can map the component to inspect what happened. We can define a group as the main component (mainComp). mainComp = 1 if the line is within the main component and 0 otherwise.
+
+```{r message=FALSE}
+ped$mainComp = 1
+ped$mainComp[ped$component > 1] = 0
+
+png("./Export/map/Map02_ComponentMap.png", width = 180, height = 100, units = "mm", res = 600)
+tm_shape(ped) + tm_lines(col = "mainComp", style = "cat", palette = c("red", "black")) + 
+tm_layout(asp = 0) # Saved in "./Export/map/Map02_ComponentMap.png"
+```
+
+![Map of spatial distribution of the main component and other isolated components](Export/map/Map02_ComponentMap.png){#fig-comp}
+
+From the map (@fig-comp), we can see that some components are isolated, which can be related to the clipping of the network by the buffer of the study area and also because of digitization errors, such as overshoot and undershoot.
+
+#### 2.2.3.2 Snapping disconnected segments
+
+Inaccurate routing results may emerge if the lines supposed to connect are disconnected. We can define a distance threshold. Then a 3D line is created to connect two disconnected vertices within this threshold. We can use the "snapNET3D" function from the "GISnetwork3D" package to do this task. We can use an example to better demonstrate the functionality. We created two lines (LineA and LineB). Both lines have the same X and Y coordinates but the Z coordinates. The difference in Z value for the first points is 1 meter while the second points is 0.1 m. We created a small line to connect the second points of the two lines.
+
+```{r message=FALSE, output=FALSE}
+LineA = data.frame( X = c(838150, 838140), Y = c(815228.3, 815227.4), Z = c(0, 0), L1 = 1) # Vertices of Line A
+LineB = data.frame( X = c(838150, 838140), Y = c(815228.3, 815227.4), Z = c(1, 0.1), L1 = 2) # Vertices of Line B
+lines = LineA %>% rbind(LineB) %>% st_as_sf(coords = c("X", "Y", "Z"), crs = 2326) # Combine vertices of Lines A and B
+lines = qgis_run_algorithm("native:pointstopath", INPUT = lines, GROUP_EXPRESSION = "L1", OUTPUT_TEXT_DIR =  tempdir())$OUTPUT %>% st_read() # Create lines from vertices
+```
+
+We can use the "snapNET3D" function to conenct vertices within a threshold 3D distance. The example belows connected vertices within 0.1m.
+
+```{r output=FALSE}
+snapLines = lines %>% snapNET3D(0.1)
+```
+
+We can inspect the snapLines and see two additional lines with the field of "snap" as 1. This indicates that the line is a snapping line.
+
+```{r}
+print(snapLines)
+```
+
+We can then inspect the coordinates of the lines. We can see that the two snapping lines are identical but in opposite directions. This is to avoid routing errors when we choose directional routing.
+
+```{r}
+snapLines %>% st_coordinates()
+```
+
+Then, we snapped vertices within 0.5m for the pedestrian network
+
+```{r message=FALSE, warning=FALSE, output=FALSE}
+pedSnapped = ped %>% dplyr::select(-component, -mainComp) %>% snapNET3D(threshold = 0.5) # snap vertices within 0.5m
+```
+
+We created 2266 snapping lines, equivalent to connecting 1095 pairs of vertices
+
+```{r}
+pedSnapped$snap %>% sum
+```
+
+```{r message=FALSE, warning=FALSE, output=FALSE}
+# Identify components for the pedSnapped
+pedSnapped = pedSnapped %>% Identify_components()
+```
+
+Now we can compare the snapped and unsnapped ped and the snapping reduced 8 components
+
+```{r}
+length(table(ped$component)) - length(table(pedSnapped$component)) 
+```
+
+We can create a map to compare the distribution of disconnected components between snapped and unsnapped ped
+
+```{r warning=FALSE, output=FALSE}
+pedSnapped$mainComp = 1
+pedSnapped$mainComp[pedSnapped$component > 1] = 0
+
+png("./Export/map/Map03_disconnected_snapped_vs_unsnapped_comparison.png", width = 180, height = 100, units = "mm", res = 600)
+tm_shape(ped %>% subset(mainComp == 0)) + tm_lines(col = "mainComp", style = "cat", palette = "red", lwd = 1.5, title.col = "", labels = "Disconnected(unsnapped)") +
+  tm_shape(pedSnapped %>% subset(mainComp == 0)) + tm_lines(col = "mainComp", style = "cat", palette = "green", title.col = "", labels = "Disconnected(snapped)") +
+  tm_compass(position = c("RIGHT", "TOP")) + tm_scale_bar() +
+  tm_layout(legend.outside = T, asp = 0)
+dev.off()
+```
+
+![Map of comparing the spatial distribution of disconnected components between snapped and unsnapped networks](Export/map/Map03_disconnected_snapped_vs_unsnapped_comparison.png){#fig-compareSnappedUnsnapped}
+
+For smooth routing, we will only retain the main component for later routing
+
+```{r message=FALSE}
+pedSnapped = pedSnapped %>% subset(component == 1)
+```
+
+#### 2.2.3.3 Create the pedestrian network by extracting the edges and vertices
+
+In network analysis, we need to have the information of the edges and nodes/vertices. Each edge connects two nodes. Edges record the weight/cost. The edges and vertices layers are the prerequisites for constructing the graph for routing and network analysis.
+
+Here, we create two sets of networks. One is a usual network, and the other is an anisotropic network.
+
+We can use the "build3DNET" function from the "GISnetwork3D" package for this task.
+
+The "build3DNET" will produce a list with edges and vertice layers. By default, the argument "ped" is FALSE. This means the network built has the direction of each edge based on the digitization direction. In later routing, you can still use directional or bi-directional routing. If "ped" is TRUE, a pedestrian network is created. This acknowledges the usual bidirectional nature of the pedestrian route and the direction-dependent weight, known as anisotropic movement. By enabling this argument, the output network will calculate the walking duration for each line segment, which depends on direction. Each line segment has two travel times depending on the direction. The calculation is based on Tobler's hiking function. Besides, If a column "directCond" is presented in the attribute table of the input line, directed edges will be filtered before producing a bi-directional network when the ped argument is TRUE. Only 1 and 0 are accepted for the directCond. 1 indicates that the edge is directed according to its digitization direction. 0 indicates that it is bi-directed, and bi-directed walking speed and travel time were calculated for these edges. This can account for some portion of pedestrian paths are not bi-direction while others are bi-direction with directional-dependent weight. We did not considered both directional and bi-directional pedestrian network in this demonstration. Further information can be found in the package documentation.
+
+```{r message=FALSE, warning=FALSE, output=FALSE}
+# Create the usual network
+pedNET = pedSnapped %>% build3DNET() 
+
+# Create an anisotropic network
+pedNETa = pedSnapped %>% build3DNET(ped = TRUE) 
+```
+
+We can print the edges layer of the output of pedNET and pedNETa. We can see that the first two columns are "from" and "to". They correspond to the direction of each line and the connected vertices. The number corresponds to the vID of the vertices layers of the output of pedNET and pedNETa. We can see that the pedNETa\$edges has two additional fields: the ***"walking pace"*** and the ***"second"***. The ***"second"*** refers to the duration of walking through the edge. Other additional information produced by this function includes the unique ID of each edge (eID), the slope in degree, and the length of each edge in 3D and 2D.
+
+```{r}
+pedNET$edges
+pedNETa$edges
+pedNET$vertices
+pedNETa$vertices
+```
+
+#### 2.2.3.4 Identify the nearest network vertices for residential buildings and primary schools
+
+The "findVertices3D" function from the "GISnetwork3D" package helps find the nearest network vertices for each input 3D point layer. The input is two 3D point layers; one is the point of interest, and the other is the vertices layer from the "build3DNET" function.
+
+```{r warning=FALSE, message=FALSE}
+# Find nearest network vertices for resBuildPT
+resBuildPT = resBuildPT %>% findVertices3D(pedNET$vertices) 
+# Find nearest network vertices for PRiScH
+PRiScH = PRiScH %>% findVertices3D(pedNET$vertices) 
+```
+
+We can print the output, and we can see that there is an additional field ***"vID"***. This is the unique ID of the network vertex nearest to the input POI.
+
+```{r}
+print(resBuildPT)
+print(PRiScH)
+```
+
+#### 2.2.3.5 Create network graph
+
+The final step is to create an igraph for later routing using the "GISigraph3D" function from the "GISnetwork3D" package. The input is the network edges and vertices created previously.
+
+```{r message=FALSE, warning=FALSE}
+# Create an undirected graph
+pedGraph_iso = GISigraph3D(pedNET$edges, pedNET$vertices, directed = FALSE) 
+# Create an anisotropic graph
+pedGraph_aniso = GISigraph3D(pedNETa$edges, pedNETa$vertices, directed = TRUE) 
+```
+
+## 2.3 Analysis
+
+### 2.3.1 Analysis: Origin-Destination matrix and summary
+
+This section shows how to use the "GISnetwork3D" package to calculate the least-cost travel between each origin and each destination. Origin-Destination Matrix (ODM) is a data matrix recording the cost of travel between each origin and each destination. Each row represents each origin, and each column represents each destination.
+
+Before starting, we must give each POI a unique ID in ascending chronological order.
+
+```{r}
+resBuild$ID = 1:nrow(resBuild)
+resBuildPT$ID = 1:nrow(resBuild)
+PRiScH$ID = 1:nrow(PRiScH)
+```
+
+#### 2.3.1.1 Create OD matrix
+
+We will calculate the OD matrix for each residential building and each primary school for both isotropic and anisotropic routing using the "ODmatrix3D" function from the "GISnetwork3D" package.
+
+For better comparison, we need to calculate the travel time for the bi-directional pedestrian network. As it does not consider the direction, the slope will become useless. Therefore, we assumed 0 degrees of slope and used the 3D length to calculate the travel time.
+
+```{r}
+# According to Tobler's hiking function, the walking pace at 0-degree slope is 0.71m/s
+pedNET$edges$second = pedNET$edges$eLength3D * 0.71 
+```
+
+Here, we created three scenarios. First, the travel time between each O-D based on an undirected movement and assumed a 0-degree slope. Second is the travel time from each residential building to each school. Third is the travel time from each school to each residential building. This directional movement is defined by the argument "mode" as "in" or "out" - by default, it is "all", assuming bi-directional.
+
+```{r warning=FALSE, message=FALSE}
+# Create ODM for undirected isotropic movement
+ODMiso = ODmatrix3D(pedGraph_iso, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, weight = pedNET$edges$second)
+
+# Create ODM for anisotropic movement
+ODManiso_from =  ODmatrix3D(pedGraph_aniso, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, weight = pedNETa$edges$second, mode = "out") # ODM according to leaving from the building tower to the school
+
+ODManiso_to =  ODmatrix3D(pedGraph_aniso, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, weight = pedNETa$edges$second, mode = "in") # ODM according to moving to the building tower from the school
+```
+
+#### 2.3.1.2 Summarize OD matrix
+
+We need to summarize the OD matrix for each origin (here, it is the residential building). We can use the "ODmatrix3D_summary" function from the "GISnetwork3D" package to do this task.
+
+This function can calculate the mean, median travel cost, and availability within a cost threshold. In the example below, we counted the number of schools within 600s walks with a weight of availability for each destination as 1.
+
+```{r warning=FALSE, message=FALSE}
+ODMiso_summary = ODmatrix3D_summary(ODMiso, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, threshold = 600, avaiW = rep(1, nrow(PRiScH)))
+
+ODManiso_from_summary = ODmatrix3D_summary(ODManiso_from, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, threshold = 600, avaiW = rep(1, nrow(PRiScH)))
+
+ODManiso_to_summary = ODmatrix3D_summary(ODManiso_to, oID = resBuildPT$ID, oV = resBuildPT$vID, dID = PRiScH$ID, dV = PRiScH$vID, threshold = 600, avaiW = rep(1, nrow(PRiScH)))
+```
+
+Here, we ploted three scatter plots (@fig-threePlots) to compare travel time for the three scenarios mentioned above.
+
+We can see the variation in travel time between scenarios. Besides, we can also see that isotropic routing tends to have lower values than anisotropic routing. We can also see the variability in travel time between travel from and to residential buildings.
+
+```{r message=FALSE, warning=FALSE, output=FALSE}
+png("./Export/plot/Plot01_ODM_time_comparison.png", width = 180, height = 60, units = "mm", res = 600)
+par(mfrow = c(1, 3), mar = c(4.1, 4.1, 0.5, 0.5))
+plot(ODManiso_from_summary$minCost, ODManiso_to_summary$minCost, pch = 21, col = alpha("grey", 0.5), bg = alpha("red", 0.5), xlab = "Travel time (from)", ylab = "Travel time (to)", xlim = c(120, 800), ylim = c(0, 730))
+
+plot(ODMiso_summary$minCost, ODManiso_to_summary$minCost, pch = 21, col = alpha("grey", 0.5), bg = alpha("red", 0.5), xlab = "Travel time (isotropic)", ylab = "Travel time (to)", xlim = c(120, 800), ylim = c(0, 730))
+
+plot(ODMiso_summary$minCost, ODManiso_from_summary$minCost, pch = 21, col = alpha("grey", 0.5), bg = alpha("red", 0.5), xlab = "Travel time (isotropic)", ylab = "Travel time (from)", xlim = c(120, 800), ylim = c(0, 730))
+dev.off()
+```
+
+![Scatter plots of variation in travel time between scenarios](Export/plot/Plot01_ODM_time_comparison.png){#fig-threePlots}
+
+### 2.3.2 Analysis: Deriving shortest path for each O-D pair
+
+In the previous section, we summarized the ODM. The ODM summary recorded each origin's destination with the least-cost travel time. We can use this O-D pair and derive the path as 3D line features using the "Shortest_3Dpaths_for_pairs" function from the "GISnetwork3D" package.
+
+#### 2.3.2.1 Create paths
+
+```{r warning=FALSE, message=FALSE}
+# Path of isotropic walking
+paths_iso = Shortest_3Dpaths_for_pairs(pedGraph_iso, edges = pedNET$edges, oID = ODMiso_summary$oID, oV = ODMiso_summary$oV, dID = ODMiso_summary$dID, dV = ODMiso_summary$dV, weight = pedNET$edges$second)
+
+# Path of walking from the origin
+paths_from = Shortest_3Dpaths_for_pairs(pedGraph_aniso, edges = pedNETa$edges, oID = ODManiso_from_summary$oID, oV = ODManiso_from_summary$oV, dID = ODManiso_from_summary$dID, dV = ODManiso_from_summary$dV, weight = pedNETa$edges$second, mode = "out")
+
+# Path of walking toward the origin
+paths_to = Shortest_3Dpaths_for_pairs(pedGraph_aniso, edges = pedNETa$edges, oID = ODManiso_to_summary$oID, oV = ODManiso_to_summary$oV, dID = ODManiso_to_summary$dID, dV = ODManiso_to_summary$dV, weight = pedNETa$edges$second, mode = "in")
+```
+
+We can print one of the examples. We can see that the exported data are the edges of the line layers with an additional field oID. The oID is the ID of the origin.
+
+```{r}
+print(paths_to)
+```
+
+#### 2.3.2.2 Summary of paths
+
+We can summarize the exported path. For instance, we can calculate the mean walking pace or summarize environmental variables along the way. Here, we calculated the average walk pace.
+
+```{r warning=FALSE, message=FALSE}
+# We used paths_to as example.
+paths_toSummary = paths_to
+paths_toSummary = aggregate(walkpace ~ oID, data = paths_toSummary %>% st_drop_geometry(), FUN = mean ) # average the walk pace 
+```
+
+We can see that some routes have higher mean pace while some have smaller.
+
+```{r}
+summary(paths_toSummary$walkpace)
+```
+
+The "Shortest_3Dpath_oneToMany" function from the "GISnetowrkGIS" is similar to the "Shortest_3Dpaths_for_pairs" while the former supports one-to-one and one-to-many routings.
+
+### 2.3.3 Analysis: Deriving service area
+
+This section demonstrates how to use the "ServiceArea3D" function from the "GISnetwork3D" package to explore the reachable areas by an origin point. We will create a service area for a sampled building using both isotropic and anisotropic methods.
+
+#### 2.3.3.1 Create sample building
+
+```{r}
+sampleBuild = resBuild[1, ]
+sampleBuildPT = resBuildPT[1, ]
+```
+
+#### 2.3.3.2 Create service area
+
+We created 10-minute catchments.
+
+```{r message=FALSE, warning=FALSE}
+# Path of isotropic walking
+catchment_iso = ServiceArea3D(pedGraph_iso, edges = pedNET$edges, vertices = pedNET$vertices, oID = sampleBuildPT$ID, oV = sampleBuildPT$vID, weight = pedNET$edges$second, search = 2000, costThreshold = 600)
+
+# Catchment of walking from the origin
+catchment_from = ServiceArea3D(pedGraph_aniso, edges = pedNETa$edges, vertices = pedNETa$vertices, oID = sampleBuildPT$ID, oV = sampleBuildPT$vID, weight = pedNETa$edges$second, search = 2000, costThreshold = 600, mode = "out")
+
+# Catchment of walking toward the origin
+catchment_to = ServiceArea3D(pedGraph_aniso, edges = pedNETa$edges, vertices = pedNETa$vertices, oID = sampleBuildPT$ID, oV = sampleBuildPT$vID, weight = pedNETa$edges$second, search = 2000, costThreshold = 600, mode = "in")
+```
+
+The output list consists of a line layer showing the reachable edges and a data frame listing all reachable vertices. This function first calculates the cost between the origin and all network vertices, and then subsets all vertices within reachable cost, and then extracts the edges containing these vertices.
+
+```{r}
+class(catchment_to) # The output is a list.
+```
+
+#### 2.3.3.3 Plot the service area
+
+```{r warning=FALSE, message=FALSE, output=FALSE}
+png("./Export/map/Map04_serviceArea_sample.png", width = 180, height = 100, units = "mm", res = 600)
+tm_shape(catchment_iso$edgesReached) + tm_lines() +
+  tm_shape(DTM) + tm_raster(title = "DTM(m)", breaks = c(0, 20, 40, 80, 100, 150, 200, 1000) ) +
+  tm_shape(ped) + tm_lines(col = "ped", title.col = "", labels = "Pedestrian path", palette = "grey", lwd = 0.6 ) +
+  tm_shape(catchment_iso$edgesReached) + tm_lines(col = "oID", title.col = "", labels = "Bi-directional", palette = "grey20") +
+  tm_shape(catchment_from$edgesReached) + tm_lines(col = "oID", title.col = "", labels = "Outward", palette = "red", lwd = 2) +
+  tm_shape(catchment_to$edgesReached) + tm_lines(col = "oID", title.col = "", labels = "Toward", palette = "green", lwd = 0.85) +
+  tm_shape(sampleBuild) + tm_fill(col = "res", title = "", labels = "Sample building", palette = "purple") +
+  tm_compass(position = c("LEFT", "TOP")) + tm_scale_bar() +
+  tm_layout(legend.outside = T, asp = 0)
+dev.off()
+```
+
+From the result (@fig-catchment), we can see that the elevation increases southward. The walking pace is faster for going downhill than going uphill. Therefore, the outward catchment extends northward while the inward catchment retreats southward. The isotropic travel (assuming 0 slopes) gets the greatest areal footprint.
+
+![Service areas](Export/map/Map04_serviceArea_sample.png){#fig-catchment}
+
+## 2.4 Function documentation
+
+### 2.4.1 A brief summary of the functionalities
+
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Functionality                                | Function                   | Brief details                                                                                                                                                                                                  |
++==============================================+============================+================================================================================================================================================================================================================+
+| Geometry & topology correction/ modification | snapNET3D                  | -   Connect disconnected line vertices situated within a predefined 3D distance                                                                                                                                |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Addressing overshoot/ undershoot problems                                                                                                                                                                  |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | reverseLine_by_condition   | -   Reverse all or indexed line segments                                                                                                                                                                       |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Correct the conflict of direction between true and digitizing direction                                                                                                                                    |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Network creation                             | Build3DNET                 | -   Decompose a 3D line layer into two layers: edges and vertices                                                                                                                                              |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support the creation of anisotropic (bi-directional routing with direction-dependent weight)/ partial anisotropic (some paths are directed while some are bi-directional with anisotropic weights) network |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | findVertices3D             | -   Identify the nearest network vertices for the input 3D point                                                                                                                                               |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   A prerequisite of routing as it identifies the entry point to the network for each POI                                                                                                                     |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | GISgraph3D                 | -   Convert the edges and vertices layers from the "Build3DNET" function to an "igraph" object for routing                                                                                                     |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Analysis                                     | ODmatrix3D                 | -   Calculate the travel cost between each origin and each destination                                                                                                                                         |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support anisotropic/ partial anisotropic routing                                                                                                                                                           |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | ODmatrix3D_summary         | -   Summary statistics on the OD matrix for each origin                                                                                                                                                        |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support the calculating the weighted availability                                                                                                                                                          |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | Shortest_3Dpaths_for_pairs | -   Extract the path in a 3D line layer for each origin-destination pair                                                                                                                                       |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support anisotropic/ partial anisotropic routing                                                                                                                                                           |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | Shortest_3Dpath_oneToMany  | -   Extract the path in a 3D line layer from one origin to one or more destinations                                                                                                                            |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support anisotropic/ partial anisotropic routing                                                                                                                                                           |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | ServiceArea3D              | -   Identify edges and vertices within reach for a 3D point                                                                                                                                                    |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Support anisotropic/ partial anisotropic routing                                                                                                                                                           |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Utility                                      | calculate_slope            | -   Calculate the degree slope between two points in 3D                                                                                                                                                        |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | dist3D                     | -   Calculate the distance between two points in 3D                                                                                                                                                            |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | tobr_hf_pace               | -   Calculate the walking speed according to Tobler's hiking function based on the input degree slope                                                                                                          |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                              | Identify_components        | -   Classify line segments into components.                                                                                                                                                                    |
+|                                              |                            |                                                                                                                                                                                                                |
+|                                              |                            | -   Each component is an isolated set of lines                                                                                                                                                                 |
++----------------------------------------------+----------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+### 2.4.2 build3DNET - Build network for 3D line vector
+
+**Description**
+
+Build network for 3D line vector.
+
+**Usage**
+
+build3DNET(line, ped = F)
+
+**Arguments**
+
+*line*\
+A sf line feature with the z value.
+
+*ped*
+
+Boolean: Indicate whether the network is built as a pedestrian network. If TRUE, this function will create a network that supports bi-directional routing with slope/directional dependent walking time(s) for each edge.
+
+**Details**
+
+This function produces the edges and vertices of the input line feature. Each edge is only connected by two vertices as this function first explodes the line feature. The edges record the from and to vertices, of which the index is the vID recorded in the vertices layer. The digitization direction determines the from and to vertices. A unique ID is generated for each edge segment (eID) and each vertex (vID). If the ped is TRUE, the produced edges will record the slopes and the walking time for both directions. The walking time is based on Tobler's hiking function.
+
+If a column "directCond" is presented in the attribute table of the input line, directed edges will be filtered before producing a bi-directional network when the ped argument is TRUE. Only 1 and 0 are accepted for the directCond. 1 indicates that the edge is directed according to its digitization direction. 0 indicates that it is bi-directed, and bi-directed walking speed and travel time were calculated for these edges.
+
+### 2.4.3 calculate_slope - Calculate the degree slope
+
+**Description**
+
+Calculate the degree slope.
+
+**Usage** calculate_slope(x1, y1, z1, x2, y2, z2)
+
+**Arguments**
+
+*x1*\
+A numeric vector of X coordinate of the from point.
+
+*y1*\
+A numeric vector of Y coordinate of the from point.
+
+*z1*\
+A numeric vector of Z coordinate of the from point.
+
+*x2*\
+A numeric vector of X coordinate of the to point.
+
+*y2*\
+A numeric vector of Y coordinate of the to point.
+
+*z2*\
+A numeric vector of Z coordinate of the to point.
+
+### 2.4.4 dist3D - Calculate the straight-line 3D distance between two points
+
+**Description**
+
+Calculate the straight-line 3D distance between two points.
+
+**Usage**
+
+dist3D(x1, y1, z1, x2, y2, z2)
+
+**Arguments**
+
+*x1*\
+A numeric vector of X coordinate of the from point.
+
+*y1*\
+A numeric vector of Y coordinate of the from point.
+
+*z1*\
+A numeric vector of Z coordinate of the from point.
+
+*x2*\
+A numeric vector of X coordinate of the to point.
+
+*y2*\
+A numeric vector of Y coordinate of the to point.
+
+*z2*\
+A numeric vector of Z coordinate of the to point.
+
+### 2.4.5 findVertices3D - Find the nearest network vertex for each input point
+
+**Description**
+
+Find the nearest network vertex for each input point.
+
+**Usage** findVertices3D(pt, vertices)
+
+**Arguments**
+
+*pt*\
+A sf point feature with Z value.
+
+*vertices*\
+The vertices of a network produced from the function - "build3DNET"
+
+**Details**
+
+This function finds the nearest vertex from the vertices layer, produced from the function "build3DNET", for each input "pt". The input "pt" must have the z value. The output has the original pt with the vID of the nearest network vertex.
+
+### 2.4.6 GISigraph3D - Create igraph from edges and vertices produced from the function "build3DNET"
+
+**Description** Create igraph from edges and vertices produced from the function "build3DNET".
+
+**Usage**
+
+GISigraph3D(edges, vertices, directed = FALSE)
+
+**Arguments**
+
+*edges*\
+Edges produced from the function "build3DNET"
+
+*vertices*\
+Vertices produced from the function "build3DNET"
+
+*directed*\
+Boolean: If TRUE, a directed graph is produced.
+
+**Details**
+
+This function convert the "edges" and "vertices" to igraph object for network analysis. The input "edges" and vertices should be the output of "build3DNET". Or a line layer of "edges" and a point layer of "vertices" with the Z dimension. The "edges" must record the vertex ID of the from and to vertices in the first two columns. The "vertices" should have a field "vID" in the first column, which should be a vector of chronological order (1,2,3...n).
+
+### 2.4.7 Identify_components - Identify the components of the network
+
+**Description** Identify the components of the network.
+
+**Usage**
+
+Identify_components(line)
+
+**Arguments**
+
+*line*\
+A sf line feature with the z value.
+
+**Details**
+
+This function identifies the component to which each edge belongs for the input line layer. This function first converts the input line layer into network data using the "build3DNET" function, and it is then converted to igraph using the "GISigraph" function to identify the component of edges. Please be cautious that the output layer is an exploded version of the line, meaning each line segment only has two connected vertices.
+
+### 2.4.8 ODmatrix3D - Create OD matrix
+
+**Description** Create OD matrix.
+
+**Usage**
+
+ODmatrix3D(graph, oID, oV, dID, dV, weight, mode = "all")
+
+**Arguments**
+
+*graph*\
+An igraph object created from the function "GISigraph3D"
+
+*oID*
+
+A numeric vector of the ID of the origin location(s)
+
+*oV*\
+A numeric vector of the vertex ID of the origin location(s)
+
+*dID*
+
+A numeric vector of the ID of the destination location(s)
+
+*dV*\
+A numeric vector of the vertex ID of the destination location(s)
+
+*weight*\
+A numeric vector of weight/ cost for each edge for the least-cost routing.
+
+*mode*\
+The direction of routing: "all" is undirected, "in" is toward the origin, and "out" is from the origin.
+
+**Details**
+
+This function produce an OD matrix that calculate the cost of the least-cost paths between each origin and destination.
+
+### 2.4.9 ODmatrix3D_summary - Summarizing OD matrix
+
+**Description**
+
+Summarizing OD matrix.
+
+**Usage**
+
+ODmatrix3D_summary(frame, oID, oV, dID, dV, threshold = 500, avaiW)
+
+**Arguments**
+
+*frame*\
+A dataframe of OD matrix.
+
+*oID* A numeric vector of the IDs of the origin locations
+
+*oV*\
+A numeric vector of the vertices IDs of the origin locations
+
+*dID*
+
+A numeric vector of the IDs of the destination locations
+
+*dV*\
+A numeric vector of the vertices IDs of the destination locations
+
+*threshold*\
+A number indicating the cost threshold for defining the catchment for calculating the availability of destinations.
+
+*avaiW*\
+A numeric vector defining the weight for each destinatioin for calculating the availability within a threshold travel cost from each origin location. Weight of one for a destination refers to counting a destination as one if it is within the catchment of the origin within a cost budget.
+
+**Details**
+
+This function summarizes the OD matrix produced from the function "ODmatrix3D". This function calculates the minimum cost, mean cost, median cost, and availability for each origin to many destinations. The availability is calculated by the sum of "avaiW" of each destination for each origin within a "threshold" search. avaiW is the weight for each destination. For instance, one means that the destination is counted as 1. The threshold is the cost \<= which the destination is counted as available within a certain level of cost.
+
+### 2.4.10 reverseLine_by_condition - Reverse line by condition
+
+**Description**
+
+This function reverses the direction of each line for the sf line features.
+
+**Usage**
+
+reverseLine_by_condition(line, condition = -999)
+
+**Arguments**
+
+*line*\
+A sf line feature.
+
+*condition*\
+A numeric vector (1 or 0) defining which line requires reversion. The input length must be the same as the total number of rows of lines. Value of 1 = requiring reversion. 0 = not requiring reversion. All line segments are reversed if the condition is not specified by default.
+
+*Details*
+
+This function reverses the direction of each line for the sf line features. The output line layer has an additional column called reversed. 0 means no reversion, and 1 means reversed.
+
+### 2.4.11 ServiceArea3D - Create 3D service area
+
+**Description**
+
+Create 3D service area. Usage ServiceArea3D(graph, edges, vertices, oID, oV, mode = "all", weight, search = 500, costThreshold = 500)
+
+**Arguments**
+
+*graph*\
+An igraph object created from the function "GISigraph3D"
+
+*edges*
+
+A sf line layer with the fields of "from" and "to" to indicate the IDs of vertices for the start and end of each line segment. This object is preferably the "edges" output from the function "build3DNET"
+
+*vertices*\
+A sf point layer with the fields of "vID".
+
+*oID*
+
+A numeric vector of the IDs of the origin locations
+
+*oV*\
+A numeric vector of the vertices IDs of the origin locations
+
+*mode*\
+The direction of routing: "all" is undirected, "in" is toward the origin, and "out" is from the origin
+
+*weight*\
+A numeric vector of weight/ cost for each edge for the least-cost routing
+
+*search*
+
+A number indicating the size of straight-line radius used to first identify possible reachable vertices. This is expressed as 2D distance
+
+*costThreshold*\
+The catchment size expressed as the maximum 3D network cost.
+
+**Details**
+
+This function identifies vertices reachable within a cost threshold from an origin vertex and also all edges linking to these vertices. Therefore, the output is a list of (1) sf point showing the reachable vertices, and (2) the edges within threshold cost from each origin location.
+
+### 2.4.12 Shortest_3Dpaths_for_pairs - Create one or more paths for each pair of origin and destination
+
+**Description**
+
+Create one or more paths for each pair of origin and destination.
+
+**Usage**
+
+Shortest_3Dpaths_for_pairs(graph, edges, oID, oV, dID, dV, weight, mode = "all")
+
+**Arguments**
+
+*graph*\
+An igraph object created from the function "GISigraph3D"
+
+*edges*\
+A sf line layer with the fields of "from" and "to" to indicate the IDs of vertices for the start and end of each line segment. This object is preferably the "edges" output from the function "build3DNET"
+
+oID
+
+A numeric vector of the IDs of the origin locations
+
+*oV*\
+A numeric vector of the vertices IDs of the origin locations
+
+*dID*
+
+A numeric vector of the IDs of the destination locations
+
+*dV*\
+A numeric vector of the vertices IDs of the destination locations
+
+*weight*\
+A numeric vector of weight/ cost for each edge for the least-cost routing
+
+*mode*\
+The direction of routing: "all" is undirected, "in" is toward the origin, and "out" is from the origin
+
+**Details**
+
+This function extracts the edges of shortest path for each OD pair.
+
+### 2.4.13 Shortest_3Dpath_oneToMany - Create paths from one origin to one or more destination(s)
+
+**Description**
+
+Create paths from one origin to one or more destination(s).
+
+**Usage** Shortest_3Dpath_oneToMany(graph, edges, weight, oV, dV, mode = "all")
+
+**Arguments**
+
+*graph*\
+An igraph object created from the function "GISigraph3D"
+
+*edges*\
+A sf line layer with the fields of "from" and "to" to indicate the IDs of vertices for the start and end of each line segment. This object is preferably the "edges" output from the function "build3DNET"
+
+*weight*\
+A numeric vector of weight/ cost for each edge for the least-cost routing
+
+*oV*\
+A numeric vector of the vertex ID of the origin location
+
+*dV*\
+A numeric vector of the vertex/vertices ID(s) of the destination location(s)
+
+*mode*\
+The direction of routing: "all" is undirected, "in" is toward the origin, and "out" is from the origin
+
+**Details**
+
+This function create separate shortest path for each O and D pair in a one-to-many basis.
+
+### 2.4.14 snapNET3D - Connect disconnected line within a distance threshod
+
+**Description**
+
+Connect disconnected line within a distance threshod.
+
+**Usage**
+
+snapNET3D(line, threshold = 0.5)
+
+**Arguments**
+
+*line*\
+A sf line feature with the z value.
+
+*threshold*\
+A distance threshold within which the disconnected vertices are to be linked by a small edge.
+
+**Details**
+
+This function connects the disconnected lines that are separated from each other within a predefined distance in 3D. Please note that the output layer is an exploded version of the line. Each line segment only has two connected vertices.
+
+### 2.4.15 tobr_hf_pace - Calculate the walking speed according to the Tobler's hiking function
+
+**Description**
+
+Calculate the walking speed according to the Tobler's hiking function.
+
+**Usage**
+
+tobr_hf_pace(Deg)
+
+**Arguments**
+
+*Deg*
+
+A numeric vector in degree slope.
