@@ -34,11 +34,13 @@ The `GISnetwork3D` has the following objectives:
 
 The R package is hosted on GitHub. The installation requires the `devtools` package for this process. Please run the following code only if you do not have `devtools` installed.
 
-```{install.packages("devtools")}
+```r
+install.packages("devtools")
 ```
 
 Then, you can install the `GISnetwork3D` package directly from the GitHub. This package relies on the following R packages: `Rcpp`, `sf`, `dplyr`, `igraph`, `raster`, `sfheaders`, `purrr`, `furrr`, `future` and `BH`. Their availability will be detected and be installed, in case missing, automatically during the installation of the `GISnetwork3D` package.
 
-```{library(devtools)}
+```r
+library(devtools)
 install_github("NKY-B/GISnetwork3D", auth_token = "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")
 ```
