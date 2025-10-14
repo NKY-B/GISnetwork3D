@@ -20,7 +20,7 @@ The `GISnetwork3D` has the following objectives:
 
 ## 1. Geometry Operation
 
-[![Cheatsheet for Geometry Operation](GISnetwork3D/images/Figure. GIS Operation.png)
+[![Cheatsheet for Geometry Operation](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20GIS%20Operation.png)
 
 ## 2. Network Construction
 
