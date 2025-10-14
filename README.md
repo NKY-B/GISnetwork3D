@@ -20,15 +20,15 @@ The `GISnetwork3D` has the following objectives:
 
 ## 1. Geometry Operation
 
-[![Cheatsheet for Geometry Operation](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20GIS%20Operation.png)
+![Cheatsheet for Geometry Operation](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20GIS%20Operation.png)
 
 ## 2. Network Construction
 
-![Cheatsheet for Network Construction](images/Figure. Network Construction.png)
+![Cheatsheet for Network Construction](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20Network%20Construction.png)
 
 ## 3. Network Analysis
 
-![Cheatsheet for Network Construction](images/Figure. Network Analysis.png)
+![Cheatsheet for Network Construction](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20Network%20Analysis.png)
 
 # Installing R Package
 
