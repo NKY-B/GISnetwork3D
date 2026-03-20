@@ -20,27 +20,22 @@ The `GISnetwork3D` has the following objectives:
 
 ## 1. Geometry Operation
 
-![Cheatsheet for Geometry Operation](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20GIS%20Operation.png)
+![Cheatsheet for Geometry Operation](images/Figure.%20GIS%20Operation.png)
 
 ## 2. Network Construction
 
-![Cheatsheet for Network Construction](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20Network%20Construction.png)
+![Cheatsheet for Network Construction](images/Figure.%20Network%20Construction.png)
 
 ## 3. Network Analysis
 
-![Cheatsheet for Network Construction](https://github.com/NKY-B/GISnetwork3D/blob/main/images/Figure.%20Network%20Analysis.png)
+![Cheatsheet for Network Construction](images/Figure.%20Network%20Analysis.png)
 
 # Installing R Package
 
 The R package is hosted on GitHub. The installation requires the `devtools` package for this process. Please run the following code only if you do not have `devtools` installed.
 
-```r
-install.packages("devtools")
-```
+`{install.packages("devtools")}`
 
 Then, you can install the `GISnetwork3D` package directly from the GitHub. This package relies on the following R packages: `Rcpp`, `sf`, `dplyr`, `igraph`, `raster`, `sfheaders`, `purrr`, `furrr`, `future` and `BH`. Their availability will be detected and be installed, in case missing, automatically during the installation of the `GISnetwork3D` package.
 
-```r
-library(devtools)
-install_github("NKY-B/GISnetwork3D", auth_token = "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")
-```
+`{library(devtools)} install_github("NKY-B/GISnetwork3D", auth_token = "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")`
